@@ -4,10 +4,10 @@ import akka.util.ByteString
 import java.math.BigInteger
 import java.nio.ByteBuffer
 import khipu.Hash
+import scala.annotation.switch
 import scala.util.Random
 
 object BytesUtil {
-  val EMPTY_BYTE_ARRAY = Array[Byte]()
   val ZERO_BYTE_ARRAY = Array[Byte](0)
 
   def bigIntegerToBytes(b: BigInteger, numBytes: Int): Array[Byte] = {
@@ -32,40 +32,44 @@ object BytesUtil {
     res
   }
 
-  def or(arrays: Array[Byte]*): Array[Byte] = {
-    require(arrays.map(_.length).distinct.length <= 1, "All the arrays should have the same length")
+  def or(_arrays: Array[Byte]*): Array[Byte] = {
+    val arrays = _arrays.toArray
     require(arrays.nonEmpty, "There should be one or more arrays")
+    require(arrays.map(_.length).distinct.length <= 1, "All the arrays should have the same length")
 
-    val zeroes = Array.fill[Byte](arrays.head.length)(0)
-    arrays.foldLeft[Array[Byte]](zeroes) {
-      case (acc, array) =>
-        var i = 0
-        while (i < acc.length) {
-          val b1 = acc(i)
-          val b2 = array(i)
-          acc(i) = (b1 | b2).toByte
-          i += 1
-        }
-        acc
+    val zeroes = Array.ofDim[Byte](arrays.head.length) // auto filled with 0
+    var i = 0
+    while (i < arrays.length) {
+      var k = 0
+      while (k < zeroes.length) {
+        val b1 = zeroes(k)
+        val b2 = arrays(i)(k)
+        zeroes(k) = (b1 | b2).toByte
+        k += 1
+      }
+      i += 1
     }
+    zeroes
   }
 
-  def and(arrays: Array[Byte]*): Array[Byte] = {
-    require(arrays.map(_.length).distinct.length <= 1, "All the arrays should have the same length")
+  def and(_arrays: Array[Byte]*): Array[Byte] = {
+    val arrays = _arrays.toArray
     require(arrays.nonEmpty, "There should be one or more arrays")
+    require(arrays.map(_.length).distinct.length <= 1, "All the arrays should have the same length")
 
     val ones = Array.fill(arrays.head.length)(0xFF.toByte)
-    arrays.foldLeft[Array[Byte]](ones) {
-      case (acc, array) =>
-        var i = 0
-        while (i < acc.length) {
-          val b1 = acc(i)
-          val b2 = array(i)
-          acc(i) = (b1 & b2).toByte
-          i += 1
-        }
-        acc
+    var i = 0
+    while (i < arrays.length) {
+      var k = 0
+      while (k < ones.length) {
+        val b1 = ones(k)
+        val b2 = arrays(i)(k)
+        ones(k) = (b1 & b2).toByte
+        k += 1
+      }
+      i += 1
     }
+    ones
   }
 
   def randomBytes(len: Int): Array[Byte] = {
@@ -89,7 +93,11 @@ object BytesUtil {
 
   def padLeft(bytes: Array[Byte], length: Int, byte: Byte): Array[Byte] = {
     val len = math.max(0, length - bytes.length)
-    val pads = Array.fill[Byte](len)(byte)
+    val pads = if (byte == 0) {
+      Array.ofDim[Byte](len) // auto filled with 0
+    } else {
+      Array.fill[Byte](len)(byte)
+    }
     concat(pads, bytes)
   }
 
@@ -119,7 +127,7 @@ object BytesUtil {
    */
   def parseBytes(input: ByteString, offset: Int, len: Int): Array[Byte] = {
     if (offset >= input.length || len == 0) {
-      EMPTY_BYTE_ARRAY
+      Array.emptyByteArray
     } else {
       val bytes = Array.ofDim[Byte](len)
       System.arraycopy(input.toArray, offset, bytes, 0, math.min(input.length - offset, len))
@@ -177,22 +185,22 @@ object BytesUtil {
   }
 
   def stripLeadingZeroes(data: Array[Byte]): Array[Byte] = {
-    if (data == null)
-      return null
-
-    firstNonZeroByte(data) match {
-      case -1 => ZERO_BYTE_ARRAY
-      case 0  => data
-      case x =>
-        val result = Array.ofDim[Byte](data.length - x)
-        System.arraycopy(data, x, result, 0, data.length - x)
-
-        result
+    if (data == null) {
+      null
+    } else {
+      (firstNonZeroByte(data): @switch) match {
+        case -1 => ZERO_BYTE_ARRAY
+        case 0  => data
+        case x =>
+          val res = Array.ofDim[Byte](data.length - x)
+          System.arraycopy(data, x, res, 0, data.length - x)
+          res
+      }
     }
   }
 
-  def bytesToBigInteger(bb: Array[Byte]): BigInteger = {
-    if (bb.length == 0) BigInteger.ZERO else new BigInteger(1, bb)
+  def bytesToBigInteger(bytes: Array[Byte]): BigInteger = {
+    if (bytes.length == 0) BigInteger.ZERO else new BigInteger(1, bytes)
   }
 
   def tail(bytes: Array[Byte]): Array[Byte] = {

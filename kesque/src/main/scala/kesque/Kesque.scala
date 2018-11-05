@@ -1,10 +1,10 @@
 package kesque
 
-import kafka.server.QuotaFactory.UnboundedQuota
 import java.io.File
-import java.nio.ByteBuffer
 import java.util.Properties
+import kafka.server.QuotaFactory.UnboundedQuota
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.record.CompressionType
 import org.apache.kafka.common.record.SimpleRecord
 import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import scala.collection.mutable
@@ -35,7 +35,7 @@ object Kesque {
     val props = org.apache.kafka.common.utils.Utils.loadProps(configFile.getAbsolutePath)
     val kesque = new Kesque(props)
     val topic = "kesque-test"
-    val table = kesque.getTable(Array(topic))
+    val table = kesque.getTable(Array(topic), fetchMaxBytes = 4096, CompressionType.SNAPPY)
 
     kesque.deleteTable(topic)
     (1 to 2) foreach { i => testWrite(table, topic, i) }
@@ -44,17 +44,18 @@ object Kesque {
     System.exit(0)
   }
 
-  def testWrite(table: HashKeyValueTable, topic: String, seq: Int) = {
-    val kvs = 1 to 100000 map (i =>
-      TKeyVal(i.toString.getBytes, (s"value_$i").getBytes))
+  private def testWrite(table: HashKeyValueTable, topic: String, seq: Int) = {
+    val kvs = 1 to 100000 map { i =>
+      TKeyVal(i.toString.getBytes, (s"value_$i").getBytes)
+    }
     table.write(kvs, topic)
   }
 
-  def testRead(table: HashKeyValueTable, topic: String) {
+  private def testRead(table: HashKeyValueTable, topic: String) {
     val keys = List("1", "2", "3")
     keys foreach { key =>
       val value = table.read(key.getBytes, topic) map (v => new String(v.value))
-      println(value)
+      println(value) // Some(value_1), Some(value_2), Some(value_3)
     }
   }
 }
@@ -64,12 +65,12 @@ final class Kesque(props: Properties) {
 
   private val topicToTable = mutable.Map[String, HashKeyValueTable]()
 
-  def getTable(topics: Array[String], fetchMaxBytes: Int = 262144) = {
-    topicToTable.getOrElseUpdate(topics.mkString(","), new HashKeyValueTable(topics, this, false, fetchMaxBytes))
+  def getTable(topics: Array[String], fetchMaxBytes: Int = 4096, compressionType: CompressionType = CompressionType.NONE, cacheSize: Int = 10000) = {
+    topicToTable.getOrElseUpdate(topics.mkString(","), new HashKeyValueTable(topics, this, false, fetchMaxBytes, compressionType, cacheSize))
   }
 
-  def getTimedTable(topics: Array[String], fetchMaxBytes: Int = 262144) = {
-    topicToTable.getOrElseUpdate(topics.mkString(","), new HashKeyValueTable(topics, this, true, fetchMaxBytes))
+  def getTimedTable(topics: Array[String], fetchMaxBytes: Int = 4096, compressionType: CompressionType = CompressionType.NONE, cacheSize: Int = 10000) = {
+    topicToTable.getOrElseUpdate(topics.mkString(","), new HashKeyValueTable(topics, this, true, fetchMaxBytes, compressionType, cacheSize))
   }
 
   private[kesque] def read(topic: String, fetchOffset: Long, fetchMaxBytes: Int) = {
@@ -81,7 +82,7 @@ final class Kesque(props: Properties) {
       fetchOnlyFromLeader = true,
       readOnlyCommitted = false,
       fetchMaxBytes = fetchMaxBytes,
-      hardMaxBytesLimit = true,
+      hardMaxBytesLimit = false, // read at lease one message even exceeds the fetchMaxBytes
       readPartitionInfo = List((partition, partitionData)),
       quota = UnboundedQuota,
       isolationLevel = org.apache.kafka.common.requests.IsolationLevel.READ_COMMITTED
@@ -91,12 +92,12 @@ final class Kesque(props: Properties) {
   /**
    * Should make sure the size in bytes of batched records is not exceeds the maximum configure value
    */
-  private[kesque] def write(topic: String, records: Seq[SimpleRecord]) = {
+  private[kesque] def write(topic: String, records: Seq[SimpleRecord], compressionType: CompressionType) = {
     val partition = new TopicPartition(topic, 0)
     //val initialOffset = readerWriter.getLogEndOffset(partition) + 1 // TODO check -1L
     val initialOffset = 0L // TODO is this useful?
 
-    val memoryRecords = ReplicaManager.buildRecords(initialOffset, records: _*)
+    val memoryRecords = kesque.buildRecords(compressionType, initialOffset, records: _*)
     val entriesPerPartition = Map(partition -> memoryRecords)
 
     replicaManager.appendToLocalLog(
@@ -142,8 +143,8 @@ final class Kesque(props: Properties) {
     var lastOffset = fetchOffset
     while (recs.hasNext) {
       val rec = recs.next
-      val key = if (rec.hasKey) getBytes(rec.key) else null
-      val value = if (rec.hasValue) getBytes(rec.value) else null
+      val key = if (rec.hasKey) kesque.getBytes(rec.key) else null
+      val value = if (rec.hasValue) kesque.getBytes(rec.value) else null
       val timestamp = rec.timestamp
       val offset = rec.offset
       op(offset, TKeyVal(key, value, timestamp))
@@ -155,30 +156,9 @@ final class Kesque(props: Properties) {
     (i, lastOffset)
   }
 
-  /**
-   * Special function to extract bytes from kafka's DefaultRecord key or value ByteBuffer
-   * @see org.apache.kafka.common.utils.Utils.writeTo
-   */
-  private[kesque] def getBytes(buffer: ByteBuffer): Array[Byte] = {
-    val length = buffer.remaining
-    val value = Array.ofDim[Byte](length)
-    if (buffer.hasArray) {
-      System.arraycopy(buffer.array(), buffer.position() + buffer.arrayOffset(), value, 0, length)
-    } else {
-      val pos = buffer.position
-      var i = pos
-      while (i < length + pos) {
-        value(i) = buffer.get(i)
-        i += 1
-      }
-    }
-    value
-  }
-
   def shutdown() {
     kafkaServer.shutdown()
   }
-
 }
 
 final case class TKeyVal(key: Array[Byte], value: Array[Byte], timestamp: Long = -1L)

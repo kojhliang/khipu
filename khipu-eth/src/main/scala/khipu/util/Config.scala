@@ -4,6 +4,7 @@ import akka.util.ByteString
 import com.typesafe.config.{ ConfigFactory, Config => TypesafeConfig }
 import java.math.BigInteger
 import java.net.InetSocketAddress
+import khipu.UInt256
 import khipu.domain.Address
 import khipu.jsonrpc.JsonRpcController.JsonRpcConfig
 import khipu.jsonrpc.http.JsonRpcHttpServer.JsonRpcHttpServerConfig
@@ -14,7 +15,6 @@ import khipu.store.datasource.LeveldbConfig
 import khipu.store.trienode.ArchivePruning
 import khipu.store.trienode.HistoryPruning
 import khipu.store.trienode.PruningMode
-import khipu.vm.UInt256
 import scala.concurrent.duration._
 import scala.util.Try
 
@@ -225,11 +225,13 @@ object BlockchainConfig {
 
       val daoForkBlockNumber = blockchainConfig.getLong("dao-fork-block-number")
       val daoForkBlockHash = ByteString(khipu.hexDecode(blockchainConfig.getString("dao-fork-block-hash")))
-      val accountStartNonce = UInt256(BigInteger.valueOf(blockchainConfig.getInt("account-start-nonce")))
+      val accountStartNonce = UInt256(blockchainConfig.getInt("account-start-nonce"))
 
       val chainId = khipu.hexDecode(blockchainConfig.getString("chain-id")).head
 
       val monetaryPolicyConfig = MonetaryPolicyConfig(blockchainConfig.getConfig("monetary-policy"))
+
+      val isDebugTraceEnabled = blockchainConfig.getBoolean("debug-trace-enabled")
     }
   }
 }
@@ -267,6 +269,8 @@ trait BlockchainConfig {
   def chainId: Byte
 
   def monetaryPolicyConfig: MonetaryPolicyConfig
+
+  def isDebugTraceEnabled: Boolean
 }
 
 object MonetaryPolicyConfig {
@@ -274,16 +278,16 @@ object MonetaryPolicyConfig {
     MonetaryPolicyConfig(
       mpConfig.getLong("era-duration"),
       mpConfig.getDouble("reward-reduction-rate"),
-      new BigInteger(mpConfig.getString("first-era-block-reward")),
-      new BigInteger(mpConfig.getString("byzantium-block-reward"))
+      UInt256(new BigInteger(mpConfig.getString("first-era-block-reward"))),
+      UInt256(new BigInteger(mpConfig.getString("byzantium-block-reward")))
     )
   }
 }
 final case class MonetaryPolicyConfig(
     eraDuration:          Long,
     rewardRedutionRate:   Double,
-    firstEraBlockReward:  BigInteger,
-    byzantiumBlockReward: BigInteger
+    firstEraBlockReward:  UInt256,
+    byzantiumBlockReward: UInt256
 ) {
   require(
     rewardRedutionRate >= 0.0 && rewardRedutionRate <= 1.0,

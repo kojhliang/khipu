@@ -1,7 +1,8 @@
 package khipu.vm
 
 import akka.util.ByteString
-import khipu.domain.{ Address, TxLogEntry }
+import khipu.domain.Address
+import khipu.domain.TxLogEntry
 
 /**
  * Represenation of the result of execution of a contract
@@ -22,6 +23,5 @@ final case class ProgramResult[W <: WorldState[W, S], S <: Storage[S]](
   addressesTouched:       Set[Address],
   error:                  Option[ProgramError],
   isRevert:               Boolean,
-  parallelRaceConditions: Set[ProgramState.ParallelRace],
-  trace:                  Vector[String]
+  parallelRaceConditions: Set[ProgramState.ParallelRace]
 )

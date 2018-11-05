@@ -5,11 +5,22 @@ import java.net.InetSocketAddress
 import java.net.URI
 
 object Peer {
-  def peerId(uri: URI): String = peerId(new InetSocketAddress(uri.getHost, uri.getPort))
-  def peerId(remoteAddress: InetSocketAddress): String = {
-    val ip = remoteAddress.getAddress.getHostAddress
-    val port = remoteAddress.getPort
-    s"$ip:$port"
+  def peerId(uri: URI): Option[String] = {
+    try {
+      val remoteAddress = new InetSocketAddress(uri.getHost, uri.getPort)
+      peerId(remoteAddress)
+    } catch {
+      case _: Throwable => None
+    }
+  }
+  def peerId(remoteAddress: InetSocketAddress): Option[String] = {
+    try {
+      val ip = remoteAddress.getAddress.getHostAddress
+      val port = remoteAddress.getPort
+      Some(s"$ip:$port")
+    } catch {
+      case _: Throwable => None
+    }
   }
 
   def uri(nodeId: Array[Byte], socketAddress: InetSocketAddress) = {
@@ -44,9 +55,9 @@ final class OutgoingPeer(val id: String, theUri: URI) extends Peer {
   protected var _uri: Option[URI] = Some(theUri)
   val remoteAddress = new InetSocketAddress(theUri.getHost, theUri.getPort)
 
-  override def equals(x: Any) = {
-    x match {
-      case that: OutgoingPeer => that.id == this.id
+  override def equals(any: Any) = {
+    any match {
+      case that: OutgoingPeer => (this eq that) || this.id == that.id
       case _                  => false
     }
   }
@@ -57,9 +68,9 @@ final class OutgoingPeer(val id: String, theUri: URI) extends Peer {
 final class IncomingPeer(val id: String, val remoteAddress: InetSocketAddress) extends Peer {
   protected var _uri: Option[URI] = None // wil be set later
 
-  override def equals(x: Any) = {
-    x match {
-      case that: IncomingPeer => that.id == this.id
+  override def equals(any: Any) = {
+    any match {
+      case that: IncomingPeer => (this eq that) || this.id == that.id
       case _                  => false
     }
   }

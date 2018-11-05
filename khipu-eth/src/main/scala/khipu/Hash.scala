@@ -1,15 +1,16 @@
 package khipu
 
 import akka.util.ByteString
+import java.util.Arrays
 
 /**
  * Usually node's hash except in storage's pruneKey. TODO
  */
 object Hash {
-  val empty = Hash(Array[Byte]())
+  val empty = Hash(Array.emptyByteArray)
   def apply(): Hash = empty
 
-  final def intHash(bytes: Array[Byte]): Int = {
+  def intHash(bytes: Array[Byte]): Int = {
     val n = math.min(bytes.length, 4)
     var h = 0
     var i = 0
@@ -21,7 +22,7 @@ object Hash {
     h
   }
 
-  final def longHash(bytes: Array[Byte]): Long = {
+  def longHash(bytes: Array[Byte]): Long = {
     val n = math.min(bytes.length, 8)
     var h = 0L
     var i = 0
@@ -47,13 +48,14 @@ object Hash {
 
     final override def hashCode: Int = intHash(bytes)
 
-    override def equals(any: Any) = any match {
-      case that: Hash => java.util.Arrays.equals(this.bytes, that.bytes)
-      case _          => false
-    }
-
     final override def toString: String = hexString
   }
-
 }
-final case class Hash(bytes: Array[Byte]) extends Hash.I
+final case class Hash(bytes: Array[Byte]) extends Hash.I {
+  override def equals(any: Any) = {
+    any match {
+      case that: Hash => (this eq that) || Arrays.equals(this.bytes, that.bytes)
+      case _          => false
+    }
+  }
+}

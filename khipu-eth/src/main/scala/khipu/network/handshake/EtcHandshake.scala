@@ -1,9 +1,9 @@
 package khipu.network.handshake
 
 import akka.util.ByteString
-import java.math.BigInteger
 import khipu.NodeStatus
 import khipu.ServerStatus
+import khipu.UInt256
 import khipu.domain.Blockchain
 import khipu.network.ForkResolver
 import khipu.network.p2p.Message
@@ -93,11 +93,11 @@ object EtcHandshake {
 
   final case class PeerInfo(
       remoteStatus:    Status,
-      totalDifficulty: BigInteger,
+      totalDifficulty: UInt256,
       forkAccepted:    Boolean,
       maxBlockNumber:  Long
   ) {
-    def withTotalDifficulty(totalDifficulty: BigInteger): PeerInfo = copy(totalDifficulty = totalDifficulty)
+    def withTotalDifficulty(totalDifficulty: UInt256): PeerInfo = copy(totalDifficulty = totalDifficulty)
     def withForkAccepted(forkAccepted: Boolean): PeerInfo = copy(forkAccepted = forkAccepted)
     def withMaxBlockNumber(maxBlockNumber: Long): PeerInfo = copy(maxBlockNumber = maxBlockNumber)
 

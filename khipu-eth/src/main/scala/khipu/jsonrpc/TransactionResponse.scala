@@ -1,9 +1,10 @@
 package khipu.jsonrpc
 
 import akka.util.ByteString
-import java.math.BigInteger
 import khipu.Hash
-import khipu.domain.{ BlockHeader, SignedTransaction }
+import khipu.UInt256
+import khipu.domain.BlockHeader
+import khipu.domain.SignedTransaction
 
 object TransactionResponse {
 
@@ -28,14 +29,14 @@ object TransactionResponse {
 }
 final case class TransactionResponse(
   hash:             Hash,
-  nonce:            BigInteger,
+  nonce:            UInt256,
   blockHash:        Option[Hash],
   blockNumber:      Option[Long],
   transactionIndex: Option[Long],
   from:             ByteString,
   to:               Option[ByteString],
-  value:            BigInteger,
-  gasPrice:         BigInteger,
+  value:            UInt256,
+  gasPrice:         UInt256,
   gas:              Long,
   input:            ByteString
 )

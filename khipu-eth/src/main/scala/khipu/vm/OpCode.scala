@@ -1,10 +1,10 @@
 package khipu.vm
 
 import akka.util.ByteString
+import khipu.UInt256
 import khipu.crypto
 import khipu.domain.Address
 import khipu.domain.TxLogEntry
-import khipu.vm.UInt256._
 
 object OpCodes {
 
@@ -172,7 +172,7 @@ object OpCode {
   def sliceBytes(bytes: ByteString, offset: Int, size: Int): ByteString = sliceBytes(bytes.toArray, offset, size)
   def sliceBytes(bytes: Array[Byte], offset: Int, size: Int): ByteString = {
     if (offset >= 0 && offset <= Int.MaxValue && size > 0) {
-      val slice = Array.fill[Byte](size)(0)
+      val slice = Array.ofDim[Byte](size) // auto filled with 0
       if (offset < bytes.length) {
         System.arraycopy(bytes, offset, slice, 0, math.min(size, bytes.length - offset))
       }
@@ -296,23 +296,23 @@ case object SIGNEXTEND extends BinaryOp(0x0b) with ConstGas[(UInt256, UInt256)] 
 }
 case object LT extends BinaryOp(0x10) with ConstGas[(UInt256, UInt256)] {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
-  protected def f(x: UInt256, y: UInt256) = x < y
+  protected def f(x: UInt256, y: UInt256) = UInt256(x < y)
 }
 case object GT extends BinaryOp(0x11) with ConstGas[(UInt256, UInt256)] {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
-  protected def f(x: UInt256, y: UInt256) = x > y
+  protected def f(x: UInt256, y: UInt256) = UInt256(x > y)
 }
 case object SLT extends BinaryOp(0x12) with ConstGas[(UInt256, UInt256)] {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
-  protected def f(x: UInt256, y: UInt256) = x slt y
+  protected def f(x: UInt256, y: UInt256) = UInt256(x slt y)
 }
 case object SGT extends BinaryOp(0x13) with ConstGas[(UInt256, UInt256)] {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
-  protected def f(x: UInt256, y: UInt256) = x sgt y
+  protected def f(x: UInt256, y: UInt256) = UInt256(x sgt y)
 }
 case object EQ extends BinaryOp(0x14) with ConstGas[(UInt256, UInt256)] {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
-  protected def f(x: UInt256, y: UInt256) = x == y
+  protected def f(x: UInt256, y: UInt256) = UInt256(x.n.compareTo(y.n) == 0)
 }
 case object AND extends BinaryOp(0x16) with ConstGas[(UInt256, UInt256)] {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
@@ -329,7 +329,7 @@ case object XOR extends BinaryOp(0x18) with ConstGas[(UInt256, UInt256)] {
 case object BYTE extends BinaryOp(0x1a) with ConstGas[(UInt256, UInt256)] {
   override protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
     val List(a, b) = state.stack.pop(2)
-    if (a.compareTo(UInt256.MAX_INT) > 0) {
+    if (a.compareTo(UInt256.MaxInt) > 0) {
       state.withError(ArithmeticException)
     }
     (a, b)
@@ -356,7 +356,7 @@ sealed abstract class UnaryOp(code: Int) extends OpCode[UInt256](code, 1, 1) wit
 }
 case object ISZERO extends UnaryOp(0x15) {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
-  protected def f(x: UInt256) = x.isZero
+  protected def f(x: UInt256) = UInt256(x.isZero)
 }
 case object NOT extends UnaryOp(0x19) {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
@@ -393,7 +393,7 @@ case object SHA3 extends OpCode[(UInt256, UInt256)](0x20, 2, 1) {
   protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
     // do not need to check params bounds, just use safe int value
     val List(offset, size) = state.stack.pop(2)
-    (offset.intValueSafe, size.intValueSafe)
+    (UInt256.safe(offset.intValueSafe), UInt256.safe(size.intValueSafe))
   }
 
   protected def exec[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S], params: (UInt256, UInt256)): ProgramState[W, S] = {
@@ -436,13 +436,13 @@ case object CALLVALUE extends ConstOp(0x34) {
   protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = s.env.value
 }
 case object CALLDATASIZE extends ConstOp(0x36) {
-  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = s.inputData.size
+  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256.safe(s.inputData.size)
 }
 case object GASPRICE extends ConstOp(0x3a) {
   protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = s.env.gasPrice
 }
 case object CODESIZE extends ConstOp(0x38) {
-  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = s.env.program.length
+  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256.safe(s.env.program.length)
 }
 case object COINBASE extends ConstOp(0x41) {
   protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256(s.env.blockHeader.beneficiary)
@@ -454,16 +454,16 @@ case object NUMBER extends ConstOp(0x43) {
   protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256(s.env.blockHeader.number)
 }
 case object DIFFICULTY extends ConstOp(0x44) {
-  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256(s.env.blockHeader.difficulty)
+  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = s.env.blockHeader.difficulty
 }
 case object GASLIMIT extends ConstOp(0x45) {
   protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256(s.env.blockHeader.gasLimit)
 }
 case object PC extends ConstOp(0x58) {
-  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256(s.pc)
+  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256.safe(s.pc)
 }
 case object MSIZE extends ConstOp(0x59) {
-  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256(UInt256.Size * UInt256.wordsForBytes(s.memory.size))
+  protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256(UInt256.SIZE * UInt256.wordsForBytes(s.memory.size))
 }
 case object GAS extends ConstOp(0x5a) {
   protected def f(s: ProgramState[_ <: WorldState[_, _ <: Storage[_]], _ <: Storage[_]]) = UInt256(s.gas - s.config.feeSchedule.G_base)
@@ -566,7 +566,7 @@ case object EXTCODECOPY extends OpCode[(UInt256, UInt256, UInt256, UInt256)](0x3
   protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
     // do not need to check params bound, just use safe int value
     val List(address, memOffset, codeOffset, size) = state.stack.pop(4)
-    (address, memOffset.intValueSafe, codeOffset.intValueSafe, size.intValueSafe)
+    (address, UInt256.safe(memOffset.intValueSafe), UInt256.safe(codeOffset.intValueSafe), UInt256.safe(size.intValueSafe))
   }
 
   protected def exec[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S], params: (UInt256, UInt256, UInt256, UInt256)): ProgramState[W, S] = {
@@ -648,7 +648,7 @@ case object MLOAD extends OpCode[UInt256](0x51, 1, 1) {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
   protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
     val List(offset) = state.stack.pop()
-    if (offset.compareTo(UInt256.MAX_INT) > 0) {
+    if (offset.compareTo(UInt256.MaxInt) > 0) {
       state.withError(ArithmeticException) // why MLOAD/MSTORE requires bounded offset
     }
     offset
@@ -663,7 +663,7 @@ case object MLOAD extends OpCode[UInt256](0x51, 1, 1) {
 
   protected def varGas[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S], params: UInt256): Long = {
     val offset = params
-    state.config.calcMemCost(state.memory.size, offset.longValueSafe, UInt256.Size)
+    state.config.calcMemCost(state.memory.size, offset.longValueSafe, UInt256.SIZE)
   }
 }
 
@@ -671,7 +671,7 @@ case object MSTORE extends OpCode[(UInt256, UInt256)](0x52, 2, 0) {
   protected def constGasFn(s: FeeSchedule) = s.G_verylow
   protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
     val List(offset, value) = state.stack.pop(2)
-    if (offset.compareTo(UInt256.MAX_INT) > 0) {
+    if (offset.compareTo(UInt256.MaxInt) > 0) {
       state.withError(ArithmeticException)
     }
     (offset, value)
@@ -685,7 +685,7 @@ case object MSTORE extends OpCode[(UInt256, UInt256)](0x52, 2, 0) {
 
   protected def varGas[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S], params: (UInt256, UInt256)): Long = {
     val (offset, _) = params
-    state.config.calcMemCost(state.memory.size, offset.longValueSafe, UInt256.Size)
+    state.config.calcMemCost(state.memory.size, offset.longValueSafe, UInt256.SIZE)
   }
 }
 
@@ -714,7 +714,7 @@ case object MSTORE8 extends OpCode[(UInt256, UInt256)](0x53, 2, 0) {
 
   protected def exec[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S], params: (UInt256, UInt256)): ProgramState[W, S] = {
     val (offset, value) = params
-    val valueToByte = (value mod 256).byteValue
+    val valueToByte = (value mod UInt256.TwoFiveSix).n.byteValue
     state.memory.store(offset.intValueSafe, valueToByte)
     state.step()
   }
@@ -767,10 +767,11 @@ case object JUMP extends OpCode[UInt256](0x56, 1, 0) with ConstGas[UInt256] {
     val pos = params
     val dest = pos.toInt // fail with InvalidJump if convertion to Int is lossy
 
-    if (pos == dest && state.program.validJumpDestinations.contains(dest))
+    if (pos == dest && state.program.isValidJumpDestination(dest)) {
       state.goto(dest)
-    else
+    } else {
       state.withError(InvalidJump(pos))
+    }
   }
 }
 
@@ -787,7 +788,7 @@ case object JUMPI extends OpCode[(UInt256, UInt256)](0x57, 2, 0) with ConstGas[(
 
     if (cond.isZero) {
       state.step()
-    } else if (pos == dest && state.program.validJumpDestinations.contains(dest)) {
+    } else if (pos == dest && state.program.isValidJumpDestination(dest)) {
       state.goto(dest)
     } else {
       state.withError(InvalidJump(pos))
@@ -906,17 +907,17 @@ case object SWAP14 extends SwapOp(0x9d)
 case object SWAP15 extends SwapOp(0x9e)
 case object SWAP16 extends SwapOp(0x9f)
 
-sealed abstract class LogOp private (code: Int, val i: Int) extends OpCode[(UInt256, UInt256, Seq[UInt256])](code, i + 2, 0) {
+sealed abstract class LogOp private (code: Int, val i: Int) extends OpCode[(UInt256, UInt256, List[UInt256])](code, i + 2, 0) {
   def this(code: Int) = this(code, code - 0xa0)
 
   final protected def constGasFn(s: FeeSchedule) = s.G_log
   final protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
     // do not need to check params bound, just use save int value
-    val List(offset, size, topics @ _*) = state.stack.pop(delta)
+    val offset :: size :: topics = state.stack.pop(delta)
     (offset, size, topics)
   }
 
-  final protected def exec[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S], params: (UInt256, UInt256, Seq[UInt256])): ProgramState[W, S] = {
+  final protected def exec[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S], params: (UInt256, UInt256, List[UInt256])): ProgramState[W, S] = {
     if (state.context.isStaticCall) {
       state.withError(StaticCallModification)
     } else {
@@ -927,7 +928,7 @@ sealed abstract class LogOp private (code: Int, val i: Int) extends OpCode[(UInt
     }
   }
 
-  final protected def varGas[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S], params: (UInt256, UInt256, Seq[UInt256])): Long = {
+  final protected def varGas[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S], params: (UInt256, UInt256, List[UInt256])): Long = {
     val (offset, size, _) = params
     val memCost = state.config.calcMemCost(state.memory.size, offset.longValueSafe, size.longValueSafe)
     val logCost = state.config.feeSchedule.G_logdata * size.toMaxLong + i * state.config.feeSchedule.G_logtopic
@@ -944,7 +945,7 @@ case object CREATE extends OpCode[(UInt256, UInt256, UInt256)](0xf0, 3, 1) {
   protected def constGasFn(s: FeeSchedule) = s.G_create
   protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
     val List(endowment, inOffset, inSize) = state.stack.pop(3)
-    if (inOffset.compareTo(UInt256.MAX_INT) > 0 || inSize.compareTo(UInt256.MAX_INT) > 0) {
+    if (inOffset.compareTo(UInt256.MaxInt) > 0 || inSize.compareTo(UInt256.MaxInt) > 0) {
       state.withError(ArithmeticException)
     }
     (endowment, inOffset, inSize)
@@ -1001,8 +1002,7 @@ case object CREATE extends OpCode[(UInt256, UInt256, UInt256)](0xf0, 3, 1) {
           state.context.isStaticCall
         )
 
-        val result = VM.run(context)
-        state.mergeTrace(result.trace)
+        val result = VM.run(context, state.isDebugTraceEnabled)
         state.mergeParallelRaceConditions(result.parallelRaceConditions)
 
         if (result.isRevert) {
@@ -1078,14 +1078,13 @@ case object CREATE extends OpCode[(UInt256, UInt256, UInt256)](0xf0, 3, 1) {
 sealed abstract class CallOp(code: Int, delta: Int, alpha: Int, hasValue: Boolean, isStateless: Boolean, isStatic: Boolean) extends OpCode[(UInt256, UInt256, UInt256, UInt256, UInt256, UInt256, UInt256)](code.toByte, delta, alpha) {
   final protected def constGasFn(s: FeeSchedule) = s.G_zero
   final protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
-    val List(gas, target, callValue, inOffset, inSize, outOffset, outSize) =
-      if (hasValue) {
-        state.stack.pop(7)
-      } else {
-        val List(gas, target, inOffset, inSize, outOffset, outSize) = state.stack.pop(6)
-        List(gas, target, UInt256.Zero, inOffset, inSize, outOffset, outSize)
-      }
-    if (inOffset.compareTo(UInt256.MAX_INT) > 0 || inSize.compareTo(UInt256.MAX_INT) > 0 || outOffset.compareTo(UInt256.MAX_INT) > 0 || outOffset.compareTo(UInt256.MAX_INT) > 0) {
+    val List(gas, target, callValue, inOffset, inSize, outOffset, outSize) = if (hasValue) {
+      state.stack.pop(7)
+    } else {
+      val List(gas, target, inOffset, inSize, outOffset, outSize) = state.stack.pop(6)
+      List(gas, target, UInt256.Zero, inOffset, inSize, outOffset, outSize)
+    }
+    if (inOffset.compareTo(UInt256.MaxInt) > 0 || inSize.compareTo(UInt256.MaxInt) > 0 || outOffset.compareTo(UInt256.MaxInt) > 0 || outOffset.compareTo(UInt256.MaxInt) > 0) {
       state.withError(ArithmeticException)
     }
     (gas, target, callValue, inOffset, inSize, outOffset, outSize)
@@ -1178,12 +1177,11 @@ sealed abstract class CallOp(code: Int, delta: Int, alpha: Int, hasValue: Boolea
           case None =>
             val code = state.world.getCode(codeAddress)
             val context = prepareProgramContext(code)
-            VM.run(context)
+            VM.run(context, state.isDebugTraceEnabled)
         }
 
         //println(s"result: $result")
 
-        state.mergeTrace(result.trace)
         state.mergeParallelRaceConditions(result.parallelRaceConditions)
 
         state.withReturnDataBuffer(result.returnData)
@@ -1222,13 +1220,11 @@ sealed abstract class CallOp(code: Int, delta: Int, alpha: Int, hasValue: Boolea
             state.withAddAddressTouched(codeAddress)
           }
 
-          // Do not relay error to parent state, since it's only of the sub-routine
-
-          if (result.isRevert) {
-            // tx 0xe62a2b4e348e805ec4bddd4dbf9ae9bcf278622ddc5d5a49ff68f8c994e9d36f of block 6020296 got error gasUsed if state.spendGas(-result.gasRemaining), the diff is extractly result.gasRemaining - whose bug?
-            // but most blocks, such as 6020299 got error gasUsed if not state.spendGas(-result.gasRemaining)
+          if (result.isRevert && result.error.isEmpty) {
             state.spendGas(-result.gasRemaining)
           }
+
+          // do not relay error to parent state, since it's only of the sub-routine
 
           // the error result may be caused by parallel condition, so merge all possible modifies
           state
@@ -1280,11 +1276,7 @@ sealed abstract class CallOp(code: Int, delta: Int, alpha: Int, hasValue: Boolea
       case CALL =>
         if (state.config.eip161) {
           if (state.world.isAccountDead(target) && endowment.compare(UInt256.Zero) != 0) {
-            if (!state.world.isAccountExist(target)) {
-              state.config.feeSchedule.G_newaccount
-            } else {
-              0
-            }
+            state.config.feeSchedule.G_newaccount
           } else {
             0
           }
@@ -1328,11 +1320,12 @@ case object DELEGATECALL extends CallOp(0xf4, 6, 1, hasValue = false, isStateles
 case object STATICCALL extends CallOp(0xfa, 6, 1, hasValue = false, isStateless = false, isStatic = true)
 
 case object RETURN extends OpCode[(UInt256, UInt256)](0xf3, 2, 0) {
-  // do not neet to check params bounds, just use safe int value
   protected def constGasFn(s: FeeSchedule) = s.G_zero
   protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
-    // do not neet to check params bounds, just use safe int value
     val List(offset, size) = state.stack.pop(2)
+    if (offset.compareTo(UInt256.MaxInt) > 0 || size.compareTo(UInt256.MaxInt) > 0) {
+      state.withError(ArithmeticException)
+    }
     (offset, size)
   }
 
@@ -1351,8 +1344,10 @@ case object RETURN extends OpCode[(UInt256, UInt256)](0xf3, 2, 0) {
 case object REVERT extends OpCode[(UInt256, UInt256)](0xfd, 2, 0) {
   protected def constGasFn(s: FeeSchedule) = s.G_zero
   protected def getParams[W <: WorldState[W, S], S <: Storage[S]](state: ProgramState[W, S]) = {
-    // do not neet to check params bounds, just use safe int value
     val List(offset, size) = state.stack.pop(2)
+    if (offset.compareTo(UInt256.MaxInt) > 0 || size.compareTo(UInt256.MaxInt) > 0) {
+      state.withError(ArithmeticException)
+    }
     (offset, size)
   }
 

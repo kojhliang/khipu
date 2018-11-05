@@ -54,8 +54,8 @@ final class BlockGenerator(
           val block = Block(header, body)
 
           val prepared = ledger.prepareBlock(block, validators) map {
-            case BlockPreparationResult(prepareBlock, BlockResult(_, gasUsed, receipts, parallel, _), stateRoot) =>
-              val receiptsLogs: Seq[Array[Byte]] = BloomFilter.emptyBloomFilterBytes +: receipts.map(_.logsBloomFilter.toArray)
+            case BlockPreparationResult(prepareBlock, BlockResult(_, gasUsed, receipts, _), stateRoot) =>
+              val receiptsLogs = BloomFilter.EmptyBloomFilter.toArray +: receipts.map(_.logsBloomFilter.toArray)
               val bloomFilter = ByteString(BytesUtil.or(receiptsLogs: _*))
 
               Right(PendingBlock(block.copy(
@@ -85,7 +85,7 @@ final class BlockGenerator(
   private def prepareTransactions(transactions: Seq[SignedTransaction], blockGasLimit: Long) = {
     val sortedTransactions = transactions.groupBy(_.sender).values.toList.flatMap { txsFromSender =>
       val ordered = txsFromSender
-        .sortBy(_.tx.gasPrice.negate)
+        .sortBy(-_.tx.gasPrice)
         .sortBy(_.tx.nonce)
         .foldLeft(Vector[SignedTransaction]()) {
           case (txs, tx) =>

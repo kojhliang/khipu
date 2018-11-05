@@ -2,16 +2,16 @@ package khipu.domain
 
 import akka.util.ByteString
 import khipu.Hash
+import khipu.UInt256
 import khipu.crypto.kec256
 import khipu.network.p2p.messages.PV63.AccountImplicits
 import khipu.rlp
 import khipu.rlp.RLPImplicits._
 import khipu.trie.ByteArraySerializable
-import khipu.vm.UInt256
 
 object Account {
   // 56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421
-  val EmptyStorageRootHash = Hash(kec256(rlp.encode(Array[Byte]())))
+  val EmptyStorageRootHash = Hash(kec256(rlp.encode(Array.emptyByteArray)))
 
   // c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
   val EmptyCodeHash = Hash(kec256(ByteString()))

@@ -3,6 +3,7 @@ package khipu.store.datasource
 import akka.actor.ActorSystem
 import akka.util.ByteString
 import java.io.File
+import java.util.Arrays
 import java.util.Properties
 import kesque.HashKeyValueTable
 import kesque.HashOffsets
@@ -12,6 +13,7 @@ import kesque.TVal
 import khipu.Hash
 import khipu.util.Clock
 import khipu.util.SimpleMap
+import org.apache.kafka.common.record.CompressionType
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
@@ -120,12 +122,11 @@ object KesqueDataSource {
   }
 
   private def dump(db: Kesque, fetchOffset: Long) = {
-    val fetchMaxBytes = 102400
     val src = "evmcode"
     val tgt = "evmcode_new"
     db.deleteTable(tgt)
-    val tableSrc = db.getTable(Array(src), fetchMaxBytes)
-    val tableTgt = db.getTable(Array(tgt), fetchMaxBytes)
+    val tableSrc = db.getTable(Array(src), fetchMaxBytes = 102400, CompressionType.NONE)
+    val tableTgt = db.getTable(Array(tgt), fetchMaxBytes = 102400, CompressionType.NONE)
 
     val hashOffsets = new HashOffsets(200)
 
@@ -161,7 +162,7 @@ object KesqueDataSource {
    * # while true;  do echo 1 > /proc/sys/vm/drop_caches;echo clean cache ok; sleep 1; done
    */
   private def testRead(db: Kesque, topic: String, fetchMaxBytes: Int = 1024000) = {
-    val table = db.getTable(Array(topic), fetchMaxBytes)
+    val table = db.getTable(Array(topic), fetchMaxBytes, CompressionType.NONE)
 
     val records = new mutable.HashMap[Hash, ByteString]()
     table.iterateOver(0, topic) {
@@ -179,7 +180,7 @@ object KesqueDataSource {
     println("key size: " + records.size)
 
     val reportCount = 1000
-    var start = System.currentTimeMillis
+    var start = System.nanoTime
     var count = 0
     records foreach {
       case (key, value) =>
@@ -187,8 +188,8 @@ object KesqueDataSource {
           case Some(x) =>
             count += 1
             if (count % reportCount == 0) {
-              println(s"rate: ${1000.0 * reportCount / (System.currentTimeMillis - start)}")
-              start = System.currentTimeMillis
+              println(s"rate: ${reportCount / ((System.nanoTime - start) / 1000000000.0)}")
+              start = System.nanoTime
             }
           case None => println(s"not found key ${key}")
         }
@@ -203,11 +204,11 @@ object KesqueDataSource {
     val table = db.getTable(Array(topic))
     table.iterateOver(0, topic) {
       case (offset, TKeyVal(key, value, timestamp)) =>
-        if (java.util.Arrays.equals(key, lostKey)) {
+        if (Arrays.equals(key, lostKey)) {
           val keyHash = Hash(lostKey).hashCode
           println(s"Found $keyInHex at offset $offset, key hash is $keyHash")
           prevValue map { x =>
-            if (java.util.Arrays.equals(x, value)) {
+            if (Arrays.equals(x, value)) {
               println("Same value as previous")
             } else {
               println("Diff value to previous")
@@ -234,9 +235,9 @@ final class KesqueDataSource(val table: HashKeyValueTable, val topic: String)(im
   val clock = new Clock()
 
   def get(key: Hash): Option[TVal] = {
-    val start = System.currentTimeMillis
+    val start = System.nanoTime
     val value = table.read(key.bytes, topic)
-    clock.elapse(System.currentTimeMillis - start)
+    clock.elapse(System.nanoTime - start)
     value
   }
 
@@ -246,4 +247,6 @@ final class KesqueDataSource(val table: HashKeyValueTable, val topic: String)(im
     table.write(toUpsert.map { case (key, value) => TKeyVal(key.bytes, value.value, _currWritingBlockNumber) }, topic)
     this
   }
+
+  def cacheHitRate = table.cacheHitRate(topic)
 }

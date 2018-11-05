@@ -1,7 +1,7 @@
 package khipu.vm
 
 import akka.util.ByteString
-import java.math.BigInteger
+import khipu.UInt256
 import khipu.crypto
 import khipu.crypto.ECDSASignature
 import khipu.crypto.zksnark.BN128Fp
@@ -11,6 +11,7 @@ import khipu.crypto.zksnark.PairingCheck
 import khipu.domain.Address
 import khipu.util.BigIntUtil
 import khipu.util.BytesUtil
+import java.math.BigInteger
 import scala.util.Try
 
 object PrecompiledContracts {
@@ -73,8 +74,7 @@ object PrecompiledContracts {
         context.initialAddressesTouched,
         error,
         false,
-        Set(),
-        Vector()
+        Set()
       )
     }
   }
@@ -84,13 +84,13 @@ object PrecompiledContracts {
 
     def exec(inputData: ByteString): (Boolean, ByteString) = {
       val bytes = inputData.toArray
-      val data = Array.fill[Byte](128)(0)
+      val data = Array.ofDim[Byte](128) // auto filled with 0
       System.arraycopy(bytes, 0, data, 0, math.min(bytes.length, data.length))
 
-      val h = Array.fill[Byte](32)(0)
-      val v = Array.fill[Byte](32)(0)
-      val r = Array.fill[Byte](32)(0)
-      val s = Array.fill[Byte](32)(0)
+      val h = Array.ofDim[Byte](32) // auto filled with 0
+      val v = Array.ofDim[Byte](32) // auto filled with 0
+      val r = Array.ofDim[Byte](32) // auto filled with 0
+      val s = Array.ofDim[Byte](32) // auto filled with 0
       System.arraycopy(data, 0, h, 0, h.length)
       System.arraycopy(data, 32, v, 0, v.length)
       System.arraycopy(data, 64, r, 0, r.length)

@@ -3,12 +3,13 @@ package khipu.blockchain.sync
 import akka.cluster.pubsub.DistributedPubSubMediator.Publish
 import akka.pattern.AskTimeoutException
 import akka.pattern.ask
-import java.math.BigInteger
 import java.util.concurrent.ThreadLocalRandom
 import khipu.BroadcastNewBlocks
+import khipu.UInt256
 import khipu.blockchain.sync
 import khipu.blockchain.sync.HandshakedPeersService.BlacklistPeer
-import khipu.domain.{ Block, BlockHeader }
+import khipu.domain.Block
+import khipu.domain.BlockHeader
 import khipu.ledger.Ledger.BlockExecutionError
 import khipu.ledger.Ledger.BlockResult
 import khipu.ledger.Ledger.MissingNodeExecptionError
@@ -37,7 +38,7 @@ object RegularSyncService {
   private case class ProcessBlockHeaders(peer: Peer, headers: List[BlockHeader])
   private case class ProcessBlockBodies(peer: Peer, bodies: List[PV62.BlockBody])
 
-  private case class ExecuteAndInsertBlocksAborted(parentTotalDifficulty: BigInteger, newBlocks: Vector[NewBlock], errors: Vector[BlockExecutionError]) extends Throwable with NoStackTrace
+  private case class ExecuteAndInsertBlocksAborted(parentTotalDifficulty: UInt256, newBlocks: Vector[NewBlock], errors: Vector[BlockExecutionError]) extends Throwable with NoStackTrace
 }
 trait RegularSyncService { _: SyncService =>
   import context.dispatcher
@@ -45,11 +46,12 @@ trait RegularSyncService { _: SyncService =>
   import util.Config.Sync._
 
   private def tf(n: Int) = "%1$4d".format(n) // tx
-  private def xf(n: Double) = "%1$5.1f".format(n) // tps
-  private def pf(n: Double) = "%1$5.2f".format(n) // percent
+  private def xf(n: Double) = "%1$6.1f".format(n) // tps
+  private def pf(n: Double) = "%1$6.2f".format(n) // percent
+  private def pf2(n: Double) = "%1$5.2f".format(n) // percent less than 100%
   private def ef(n: Double) = "%1$6.3f".format(n) // elapse time
-  private def gf(n: Double) = "%1$6.3f".format(n) // gas
-  private def lf(n: Int) = "%1$5d".format(n) // payload
+  private def gf(n: Double) = "%1$7.2f".format(n) // gas
+  private def lf(n: Int) = "%1$6d".format(n) // payload
 
   // Should keep newer block to be at the front
   private var workingHeaders = List[BlockHeader]()
@@ -77,9 +79,6 @@ trait RegularSyncService { _: SyncService =>
 
     case SyncService.MinedBlock(block) =>
       processMinedBlock(block)
-
-    case SyncService.ReportStatusTick =>
-      log.debug(s"Block: ${appStateStorage.getBestBlockNumber()}. Peers(in/out): ${handshakedPeers.size}(${incomingPeers.size}/${outgoingPeers.size}) black: ${blacklistPeers.size}")
   }
 
   private def resumeRegularSync() {
@@ -181,13 +180,14 @@ trait RegularSyncService { _: SyncService =>
 
   private def doProcessBlockHeaders(peer: Peer, headers: List[BlockHeader]) {
     if (checkHeaders(headers)) {
-      blockchain.getBlockHeaderByNumber(headers.head.number - 1) match {
+      val firstHeader = headers.head
+      blockchain.getBlockHeaderByNumber(firstHeader.number - 1) match {
         case Some(parent) =>
-          if (parent.hash == headers.head.parentHash) {
+          if (parent.hash == firstHeader.parentHash) {
             // we have same chain prefix
             val oldBranch = getPrevBlocks(headers)
-            val oldBranchTotalDifficulty = oldBranch.map(_.header.difficulty).foldLeft(BigInteger.ZERO)(_ add _)
-            val newBranchTotalDifficulty = headers.map(_.difficulty).foldLeft(BigInteger.ZERO)(_ add _)
+            val oldBranchTotalDifficulty = oldBranch.map(_.header.difficulty).foldLeft(UInt256.Zero)(_ + _)
+            val newBranchTotalDifficulty = headers.map(_.difficulty).foldLeft(UInt256.Zero)(_ + _)
 
             if (newBranchTotalDifficulty.compareTo(oldBranchTotalDifficulty) > 0) { // TODO what about == 0 ?
               val transactionsToAdd = oldBranch.flatMap(_.body.transactionList)
@@ -197,7 +197,7 @@ trait RegularSyncService { _: SyncService =>
               log.debug(s"Request block bodies from $peer")
 
               requestingBodies(peer, hashes)(syncRequestTimeout.plus((hashes.size * 100).millis)) andThen {
-                case Success(Some(BlockBodiesResponse(peerId, bodies))) =>
+                case Success(Some(BlockBodiesResponse(peerId, remainingHashes, receivedHashes, bodies))) =>
                   log.debug(s"Got block bodies from $peer")
                   self ! ProcessBlockBodies(peer, bodies)
 
@@ -216,19 +216,19 @@ trait RegularSyncService { _: SyncService =>
 
             } else {
               // add first block from branch as ommer
-              headers.headOption foreach { header => ommersPool ! OmmersPool.AddOmmers(List(header)) }
+              ommersPool ! OmmersPool.AddOmmers(List(firstHeader))
               scheduleResume()
             }
 
           } else {
             log.info(s"[sync] Received branch block ${headers.head.number} from ${peer.id}, resolving fork ...")
 
-            requestingHeaders(peer, None, Right(headers.head.parentHash), blockResolveDepth, skip = 0, reverse = true)(syncRequestTimeout) andThen {
+            requestingHeaders(peer, None, Right(firstHeader.parentHash), blockResolveDepth, skip = 0, reverse = true)(syncRequestTimeout) andThen {
               case Success(Some(BlockHeadersResponse(peerId, headers, true))) =>
                 self ! ProcessBlockHeaders(peer, headers)
 
-              case Success(Some(BlockHeadersResponse(peerId, headers, false))) =>
-                blockPeerAndResumeWithAnotherOne(peer, s"Got error in block headers response for requested: ${headers.head.parentHash}")
+              case Success(Some(BlockHeadersResponse(peerId, List(), false))) =>
+                blockPeerAndResumeWithAnotherOne(peer, s"Got error in block headers response for requested: ${firstHeader.parentHash}")
 
               case Success(None) =>
                 scheduleResume()
@@ -243,7 +243,7 @@ trait RegularSyncService { _: SyncService =>
 
         case None =>
           log.info(s"[warn] Received block header ${headers.head.number} without parent from ${peer.id}, trying to lookback to ${headers.head.number - 1}")
-          lookbackFromBlock = Some(headers.head.number - 1)
+          lookbackFromBlock = Some(firstHeader.number - 1)
           blockPeerAndResumeWithAnotherOne(peer, s"Got block header ${headers.head.number} that does not have parent")
       }
     } else {
@@ -278,10 +278,10 @@ trait RegularSyncService { _: SyncService =>
             throw new IllegalStateException(s"No total difficulty for the latest block with number ${blocks.head.header.number - 1} (and hash ${blocks.head.header.parentHash.hexString})")
           }
 
-          val start = System.currentTimeMillis
+          val start = System.nanoTime
           executeAndInsertBlocks(preValidBlocks, parentTd, preValidBlocks.size > 1) andThen {
             case Success((_, newBlocks, errors)) =>
-              val elapsed = (System.currentTimeMillis - start) / 1000.0
+              val elapsed = (System.nanoTime - start) / 1000000000.0
 
               if (newBlocks.nonEmpty) {
                 val (nTx, _gasUsed, nTxInParallel) = newBlocks.foldLeft((0, 0L, 0)) {
@@ -305,7 +305,7 @@ trait RegularSyncService { _: SyncService =>
                     log.debug(s"Request block bodies from $peer")
 
                     requestingBodies(peer, hashes)(syncRequestTimeout.plus((hashes.size * 100).millis)) andThen {
-                      case Success(Some(BlockBodiesResponse(peerId, bodies))) =>
+                      case Success(Some(BlockBodiesResponse(peerId, remainingHashes, receivedHashes, bodies))) =>
                         log.debug(s"Got block bodies from $peer")
                         self ! ProcessBlockBodies(peer, bodies)
 
@@ -376,7 +376,7 @@ trait RegularSyncService { _: SyncService =>
    * @param newBlocks which, after adding the corresponding NewBlock msg for blocks, will be broadcasted
    * @return list of NewBlocks to broadcast (one per block successfully executed) and  errors if happened during execution
    */
-  private def executeAndInsertBlocks(blocks: Vector[Block], parentTd: BigInteger, isBatch: Boolean): Future[(BigInteger, Vector[NewBlock], Vector[BlockExecutionError])] = {
+  private def executeAndInsertBlocks(blocks: Vector[Block], parentTd: UInt256, isBatch: Boolean): Future[(UInt256, Vector[NewBlock], Vector[BlockExecutionError])] = {
     blocks.foldLeft(Future.successful(parentTd, Vector[NewBlock](), Vector[BlockExecutionError]())) {
       case (prevFuture, block) =>
         prevFuture flatMap {
@@ -403,20 +403,20 @@ trait RegularSyncService { _: SyncService =>
     }
   }
 
-  private def executeAndInsertBlock(block: Block, parentTd: BigInteger, isBatch: Boolean): Future[Either[BlockExecutionError, NewBlock]] = {
+  private def executeAndInsertBlock(block: Block, parentTd: UInt256, isBatch: Boolean): Future[Either[BlockExecutionError, NewBlock]] = {
     try {
-      val start = System.currentTimeMillis
+      val start = System.nanoTime
       ledger.executeBlock(block, validators) map {
-        case Right(BlockResult(world, _, receipts, parallelCount, dbTimePercent)) =>
-          val newTd = parentTd add block.header.difficulty
+        case Right(BlockResult(world, _, receipts, stats)) =>
+          val newTd = parentTd + block.header.difficulty
 
-          val start1 = System.currentTimeMillis
+          val start1 = System.nanoTime
           world.persist()
           blockchain.saveBlock(block)
           blockchain.saveReceipts(block.header.hash, receipts)
           blockchain.saveTotalDifficulty(block.header.hash, newTd)
           appStateStorage.putBestBlockNumber(block.header.number)
-          log.debug(s"${block.header.number} persisted in ${System.currentTimeMillis - start1}ms")
+          log.debug(s"${block.header.number} persisted in ${(System.nanoTime - start1) / 1000000}ms") // usually less than 20ms
 
           pendingTransactionsService ! PendingTransactionsService.RemoveTransactions(block.body.transactionList)
           ommersPool ! OmmersPool.RemoveOmmers((block.header +: block.body.uncleNodesList).toList)
@@ -424,10 +424,12 @@ trait RegularSyncService { _: SyncService =>
           val nTx = block.body.transactionList.size
           val gasUsed = block.header.gasUsed / 1048576.0
           val payloadSize = block.body.transactionList.map(_.tx.payload.size).foldLeft(0)(_ + _)
-          val elapsed = (System.currentTimeMillis - start) / 1000.0
-          val parallel = 100.0 * parallelCount / nTx
-          log.info(s"[sync]${if (isBatch) "+" else " "}Executed #${block.header.number} (${tf(nTx)} tx) in ${ef(elapsed)}s, ${xf(nTx / elapsed)} tx/s, ${gf(gasUsed / elapsed)} mgas/s, payload ${lf(payloadSize)}, parallel ${pf(parallel)}%, db ${pf(dbTimePercent)}%")
-          Right(NewBlock(block, newTd, parallelCount))
+          val elapsed = (System.nanoTime - start) / 1000000000.0
+          val parallel = 100.0 * stats.parallelCount / nTx
+          val dbTimePercent = stats.dbReadTimePercent
+          val cacheHitRates = stats.cacheHitRates.map(x => s"${pf2(x)}%").mkString(" ")
+          log.info(s"[sync]${if (isBatch) "+" else " "}Executed #${block.header.number} (${tf(nTx)} tx) in ${ef(elapsed)}s, ${xf(nTx / elapsed)} tx/s, ${gf(gasUsed / elapsed)} mgas/s, payload ${lf(payloadSize)}, parallel ${pf(parallel)}%, db ${pf(dbTimePercent)}%, cache ${cacheHitRates}")
+          Right(NewBlock(block, newTd, stats.parallelCount))
 
         case Left(err) =>
           log.warning(s"Failed to execute mined block because of $err")
@@ -451,7 +453,7 @@ trait RegularSyncService { _: SyncService =>
     }
 
     if (peersToUse.nonEmpty) {
-      val candicates = peersToUse.toList.sortBy { case (_, td) => td.negate }.take(3).map(_._1).toArray
+      val candicates = peersToUse.toList.sortBy { case (_, td) => -td }.take(3).map(_._1).toArray
       Some(nextCandicate(candicates))
     } else {
       None
@@ -465,7 +467,7 @@ trait RegularSyncService { _: SyncService =>
     } -- nodeErrorPeers
 
     if (peersToUse.nonEmpty) {
-      val candicates = peersToUse.toList.sortBy { case (_, td) => td.negate }.take(3).map(_._1).toArray
+      val candicates = peersToUse.toList.sortBy { case (_, td) => -td }.take(3).map(_._1).toArray
       Some(nextCandicate(candicates))
     } else {
       None

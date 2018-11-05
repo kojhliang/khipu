@@ -39,8 +39,8 @@ import khipu.validators.BlockHeaderValidator
 import khipu.validators.BlockValidator
 import khipu.validators.OmmersValidator
 import khipu.validators.SignedTransactionValidator
-import khipu.validators.SignedTransactionValidatorImpl
 import khipu.validators.Validators
+import org.apache.kafka.common.record.CompressionType
 import org.spongycastle.crypto.params.ECPublicKeyParameters
 import scala.concurrent.Await
 import scala.concurrent.Future
@@ -111,17 +111,23 @@ class ServiceBoardExtension(system: ExtendedActorSystem) extends Extension {
     }
     lazy val kesque = new Kesque(kafkaProps)
     log.info(s"Kesque started using config file: $kafkaConfigFile")
-    // make sure enough fetchMaxBytes, especially with batched stored records, eg size of 400 storage nodes may > 102,400
+    // block size evalution: https://etherscan.io/chart/blocksize, https://ethereum.stackexchange.com/questions/1106/is-there-a-limit-for-transaction-size/1110#1110
+    // trie node size evalution:
+    //   LeafNode - 256bytes(key) + value ~ 256 + value
+    //   ExtensionNode - 256bytes(key) + 256bytes(hash) ~ 512
+    //   BranchNode - 32bytes (children) + (256bytes(key) + value) (terminator with k-v) ~ 288 + value
+    // account trie node size evalution: account value - 4x256bytes ~ 288 + 1024
+    // storage trie node size evalution: storage valye - 256bytes ~ 288 + 256 
     private val futureTables = Future.sequence(List(
-      Future(kesque.getTable(Array(KesqueDataSource.account), 262144)), // 256KB size
-      Future(kesque.getTable(Array(KesqueDataSource.storage), 262144)),
-      Future(kesque.getTable(Array(KesqueDataSource.evmcode), 262144)),
+      Future(kesque.getTable(Array(KesqueDataSource.account), 4096, CompressionType.NONE, cacheCfg.cacheSize)),
+      Future(kesque.getTable(Array(KesqueDataSource.storage), 4096, CompressionType.NONE, cacheCfg.cacheSize)),
+      Future(kesque.getTable(Array(KesqueDataSource.evmcode), 24576)),
       Future(kesque.getTimedTable(Array(
         KesqueDataSource.header,
         KesqueDataSource.body,
         KesqueDataSource.receipts,
         KesqueDataSource.td
-      ), 1024000))
+      ), 102400))
     ))
     private val List(accountTable, storageTable, evmcodeTable, blockTable) = Await.result(futureTables, Duration.Inf)
     //private val headerTable = kesque.getTimedTable(Array(KesqueDataSource.header), 1024000)
@@ -181,7 +187,7 @@ class ServiceBoardExtension(system: ExtendedActorSystem) extends Extension {
     val blockValidator: BlockValidator = BlockValidator
     val blockHeaderValidator: BlockHeaderValidator.I = new BlockHeaderValidator(blockchainConfig)
     val ommersValidator: OmmersValidator.I = new OmmersValidator(blockchainConfig)
-    val signedTransactionValidator: SignedTransactionValidator = new SignedTransactionValidatorImpl(blockchainConfig)
+    val signedTransactionValidator = new SignedTransactionValidator(blockchainConfig)
   }
 
   val ledger: Ledger.I = new Ledger(blockchain, blockchainConfig)(system)

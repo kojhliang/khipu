@@ -1,9 +1,12 @@
 package khipu
 
+import akka.util.ByteString
+
 package object rlp {
 
-  val EmptyRLPData = encode(RLPValue(Array[Byte]()))
+  val EmptyRLPData = encode(RLPValue(Array.emptyByteArray))
   val EmptyRLPList = encode(RLPList())
+  val ZeroByteRLP = RLP.byteToByteArray(0: Byte) // return Array()
 
   final case class RLPException(message: String) extends RuntimeException(message)
 
@@ -43,7 +46,20 @@ package object rlp {
 
   trait RLPSerializable {
     def toRLPEncodable: RLPEncodeable
-    def toBytes: Array[Byte] = encode(this.toRLPEncodable)
+    final def toBytes: Array[Byte] = encode(this.toRLPEncodable)
   }
 
+  // --- utilities for UInt256
+
+  def toRLPEncodable(value: UInt256): RLPEncodeable =
+    RLPValue(if (value.isZero) ZeroByteRLP else value.nonZeroLeadingBytes)
+
+  def toUInt256(bytes: ByteString): UInt256 = toUInt256(bytes.toArray)
+  def toUInt256(bytes: Array[Byte]): UInt256 = toUInt256(rawDecode(bytes))
+  def toUInt256(rLPEncodeable: RLPEncodeable): UInt256 = {
+    rLPEncodeable match {
+      case RLPValue(bytes) => if (bytes.length == 0) UInt256.Zero else UInt256(bytes)
+      case _               => throw RLPException("src is not an RLPValue")
+    }
+  }
 }

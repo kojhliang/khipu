@@ -18,10 +18,7 @@ object Node {
   private[trie] val ListSize: Byte = 17
   private val PairSize: Byte = 2
 
-  val nodeEnc = new NodeEncoder()
-  val nodeDec = new NodeDecoder()
-
-  final class NodeEncoder extends RLPEncoder[Node] {
+  object nodeEnc extends RLPEncoder[Node] {
     override def encode(obj: Node): RLPEncodeable = obj match {
       case LeafNode(key, value) =>
         RLPList(HexPrefix.encode(nibbles = key, isLeaf = true), value)
@@ -36,35 +33,51 @@ object Node {
         val childrenEncoded = children.map {
           case Some(Right(node)) => encode(node)
           case Some(Left(bytes)) => RLPValue(bytes)
-          case None              => RLPValue(Array.ofDim[Byte](0))
+          case None              => RLPValue(Array.emptyByteArray)
         }
         val encoded = Array.ofDim[RLPEncodeable](childrenEncoded.length + 1)
         System.arraycopy(childrenEncoded, 0, encoded, 0, childrenEncoded.length)
-        encoded(encoded.length - 1) = RLPValue(terminator.getOrElse(Array.ofDim[Byte](0)))
+        encoded(encoded.length - 1) = RLPValue(terminator.getOrElse(Array.emptyByteArray))
 
         RLPList(encoded: _*)
     }
   }
 
-  final class NodeDecoder extends RLPDecoder[Node] {
+  object nodeDec extends RLPDecoder[Node] {
     override def decode(rlp: RLPEncodeable): Node = rlp match {
       case RLPList(xs @ _*) =>
         val items = xs.toArray
         items.length match {
           case ListSize =>
-            val init = Array.ofDim[RLPEncodeable](items.length - 1)
-            System.arraycopy(items, 0, init, 0, init.length)
+            val childrenLength = items.length - 1
+            val parsedChildren = Array.ofDim[Option[Either[Array[Byte], Node]]](childrenLength)
             val last = items(items.length - 1)
-            val parsedChildren = init.map {
-              case list: RLPList     => Some(Right(decode(list)))
-              case RLPValue(Array()) => None
-              case RLPValue(bytes)   => Some(Left(bytes))
+            var i = 0
+            while (i < childrenLength) {
+              val child = items(i) match {
+                case list: RLPList =>
+                  Some(Right(decode(list)))
+                case RLPValue(bytes) =>
+                  if (bytes.length == 0) {
+                    None
+                  } else {
+                    Some(Left(bytes))
+                  }
+              }
+              parsedChildren(i) = child
+              i += 1
             }
 
-            BranchNode(parsedChildren, fromEncodeable[Array[Byte]](last) match {
-              case Array()    => None
-              case terminator => Some(terminator)
-            })
+            val teminatorBytes = fromEncodeable[Array[Byte]](last)
+            val terminator = if (teminatorBytes.length == 0) {
+              None
+            } else {
+              Some(teminatorBytes)
+            }
+            BranchNode(
+              parsedChildren,
+              terminator
+            )
 
           case PairSize =>
             HexPrefix.decode(items(0)) match {
@@ -72,10 +85,13 @@ object Node {
                 LeafNode(key, items(1))
 
               case (key, false) =>
-                ExtensionNode(key, items(1) match {
-                  case list: RLPList   => Right(decode(list))
-                  case RLPValue(bytes) => Left(bytes)
-                })
+                ExtensionNode(
+                  key,
+                  items(1) match {
+                    case list: RLPList   => Right(decode(list))
+                    case RLPValue(bytes) => Left(bytes)
+                  }
+                )
             }
 
           case _ => throw new RuntimeException("Invalid Node")
@@ -95,7 +111,7 @@ sealed trait Node {
   lazy val encoded: Array[Byte] = rlp.encode[Node](this)(Node.nodeEnc)
   lazy val hash: Array[Byte] = trie.toHash(encoded)
 
-  def capped: Array[Byte] = if (encoded.length < 32) encoded else hash
+  final def capped: Array[Byte] = if (encoded.length < 32) encoded else hash
 }
 
 final case class LeafNode(key: Array[Byte], value: Array[Byte]) extends Node
@@ -165,13 +181,14 @@ final case class BranchNode(children: Array[Option[Either[Array[Byte], Node]]], 
   /**
    * This function creates a new BranchNode by updating one of the children of the self node.
    *
-   * @param childIndex of the BranchNode children where the child should be inserted.
+   * @param position of the BranchNode children where the child should be inserted.
    * @param childNode  to be inserted as a child of the new BranchNode (and hashed if necessary).
    * @return a new BranchNode.
    */
-  def updateChild(childIndex: Int, childNode: Node): BranchNode = {
+  def updateChild(position: Int, childNode: Node): BranchNode = {
     val childCapped = childNode.capped
-    BranchNode(children.updated(childIndex, Some(if (childCapped.length == 32) Left(childCapped) else Right(childNode))), terminator)
+    children(position) = Some(if (childCapped.length == 32) Left(childCapped) else Right(childNode))
+    BranchNode(children, terminator)
   }
 
   override def toString = {

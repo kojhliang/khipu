@@ -1,6 +1,8 @@
 package khipu.vm
 
 import akka.util.ByteString
+import java.util.Arrays
+import khipu.UInt256
 
 /**
  * Volatile memory with 256 bit address space.
@@ -14,7 +16,7 @@ object Memory {
   def empty(): Memory = new Memory()
 }
 final class Memory private () {
-  private var underlying: Array[Byte] = Array[Byte]()
+  private var underlying: Array[Byte] = Array.emptyByteArray
 
   def store(offset: Int, b: Byte): Unit = store(offset, Array(b))
   def store(offset: Int, uint: UInt256): Unit = store(offset, uint.bytes)
@@ -32,7 +34,7 @@ final class Memory private () {
     }
   }
 
-  def load(offset: Int): UInt256 = UInt256(doLoad(offset, UInt256.Size))
+  def load(offset: Int): UInt256 = UInt256(doLoad(offset, UInt256.SIZE))
   def load(offset: Int, size: Int): ByteString = ByteString(doLoad(offset, size.toInt))
 
   /**
@@ -47,7 +49,7 @@ final class Memory private () {
       System.arraycopy(underlying, offset, data, 0, size)
       data
     } else {
-      Array()
+      Array.emptyByteArray
     }
   }
 
@@ -70,10 +72,10 @@ final class Memory private () {
 
   def size: Int = underlying.length
 
-  override def equals(that: Any): Boolean = {
-    that match {
-      case that: Memory => java.util.Arrays.equals(this.underlying, that.underlying)
-      case other        => false
+  override def equals(any: Any): Boolean = {
+    any match {
+      case that: Memory => (this eq that) || Arrays.equals(this.underlying, that.underlying)
+      case _            => false
     }
   }
 

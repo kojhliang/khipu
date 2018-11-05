@@ -1,12 +1,10 @@
 package khipu.vm
 
 import akka.util.ByteString
-import java.math.BigInteger
+import khipu.UInt256
 import khipu.util.BlockchainConfig
+import java.math.BigInteger
 
-// scalastyle:off number.of.methods
-// scalastyle:off number.of.types
-// scalastyle:off magic.number
 object EvmConfig {
 
   val MaxCallDepth: Int = 1024
@@ -19,7 +17,7 @@ object EvmConfig {
    * returns the evm config that should be used for given block
    */
   def forBlock(blockNumber: Long, blockchainConfig: BlockchainConfig): EvmConfig = {
-    val transitionBlockToConfig: Map[Long, EvmConfig] = Map(
+    val transitionBlockToConfig = Map(
       blockchainConfig.frontierBlockNumber -> FrontierConfig,
       blockchainConfig.homesteadBlockNumber -> HomesteadConfig,
       blockchainConfig.eip150BlockNumber -> PostEIP150Config,
@@ -100,7 +98,7 @@ object EvmConfig {
    *     140 - REVERT instruction in the Ethereum Virtual Machine</li>
    *     196 - Precompiled contracts for addition and scalar multiplication on the elliptic curve alt_bn128</li>
    *     197 - Precompiled contracts for optimal Ate pairing check on the elliptic curve alt_bn128</li>
-   *     198 - Precompiled contract for bigint modular exponentiation</li>
+   *     198 - Precompiled contract for big int modular exponentiation</li>
    *     211 - New opcodes: RETURNDATASIZE and RETURNDATACOPY</li>
    *     214 - New opcode STATICCALL</li>
    *     658 - Embedding transaction return data in receipts</li>
@@ -129,11 +127,21 @@ final case class EvmConfig(
     eip212:                          Boolean, // replaced eip197
     eip198:                          Boolean,
     eip658:                          Boolean
-
 ) {
   import EvmConfig._
 
-  val byteToOpCode: Map[Byte, OpCode[_]] = opCodes.map(op => op.code -> op).toMap
+  private val byteToOpCode = {
+    val ops = Array.ofDim[OpCode[_]](256)
+    opCodes foreach { op =>
+      ops(op.code.toInt & 0xFF) = op
+      op.code.hashCode
+    }
+    ops
+  }
+
+  def getOpCode(code: Byte) = {
+    Option(byteToOpCode(code.toInt & 0xFF))
+  }
 
   /**
    * Calculate gas cost of memory usage. Incur a blocking gas cost if memory usage exceeds reasonable limits.

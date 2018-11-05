@@ -2,9 +2,10 @@ package khipu.jsonrpc
 
 import akka.actor.{ Actor, Cancellable, Props, Scheduler }
 import akka.pattern.{ ask, pipe }
-import akka.util.{ ByteString, Timeout }
-import java.math.BigInteger
+import akka.util.ByteString
+import akka.util.Timeout
 import khipu.Hash
+import khipu.UInt256
 import khipu.domain.Address
 import khipu.domain.Block
 import khipu.domain.Blockchain
@@ -15,7 +16,8 @@ import khipu.ledger.BloomFilter
 import khipu.mining.BlockGenerator
 import khipu.store.AppStateStorage
 import khipu.transactions.PendingTransactionsService
-import khipu.util.{ FilterConfig, TxPoolConfig }
+import khipu.util.FilterConfig
+import khipu.util.TxPoolConfig
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -33,30 +35,30 @@ object FilterManager {
     Props(new FilterManager(blockchain, blockGenerator, appStateStorage, keyStore, filterConfig, txPoolConfig))
 
   sealed trait Filter {
-    def id: BigInteger
+    def id: UInt256
   }
   final case class LogFilter(
-    override val id: BigInteger,
+    override val id: UInt256,
     fromBlock:       Option[BlockParam],
     toBlock:         Option[BlockParam],
     address:         Option[Address],
-    topics:          Seq[Seq[ByteString]]
+    topics:          List[List[ByteString]]
   ) extends Filter
-  final case class BlockFilter(override val id: BigInteger) extends Filter
-  final case class PendingTransactionFilter(override val id: BigInteger) extends Filter
+  final case class BlockFilter(override val id: UInt256) extends Filter
+  final case class PendingTransactionFilter(override val id: UInt256) extends Filter
 
-  final case class NewLogFilter(fromBlock: Option[BlockParam], toBlock: Option[BlockParam], address: Option[Address], topics: Seq[Seq[ByteString]])
+  final case class NewLogFilter(fromBlock: Option[BlockParam], toBlock: Option[BlockParam], address: Option[Address], topics: List[List[ByteString]])
   final case class NewBlockFilter()
   final case class NewPendingTransactionFilter()
-  final case class NewFilterResponse(id: BigInteger)
+  final case class NewFilterResponse(id: UInt256)
 
-  final case class UninstallFilter(id: BigInteger)
+  final case class UninstallFilter(id: UInt256)
   final case class UninstallFilterResponse()
 
-  final case class GetFilterLogs(id: BigInteger)
-  final case class GetFilterChanges(id: BigInteger)
+  final case class GetFilterLogs(id: UInt256)
+  final case class GetFilterChanges(id: UInt256)
 
-  final case class GetLogs(fromBlock: Option[BlockParam], toBlock: Option[BlockParam], address: Option[Address], topics: Seq[Seq[ByteString]])
+  final case class GetLogs(fromBlock: Option[BlockParam], toBlock: Option[BlockParam], address: Option[Address], topics: List[List[ByteString]])
 
   final case class TxLog(
     logIndex:         Long,
@@ -79,7 +81,7 @@ object FilterManager {
   final case class BlockFilterLogs(blockHashes: Seq[Hash]) extends FilterLogs
   final case class PendingTransactionFilterLogs(txHashes: Seq[Hash]) extends FilterLogs
 
-  private case class FilterTimeout(id: BigInteger)
+  private case class FilterTimeout(id: UInt256)
 }
 class FilterManager(
     blockchain:      Blockchain,
@@ -99,13 +101,13 @@ class FilterManager(
 
   val maxBlockHashesChanges = 256
 
-  var filters: Map[BigInteger, Filter] = Map.empty
+  var filters: Map[UInt256, Filter] = Map.empty
 
-  var lastCheckBlocks: Map[BigInteger, Long] = Map.empty
+  var lastCheckBlocks: Map[UInt256, Long] = Map.empty
 
-  var lastCheckTimestamps: Map[BigInteger, Long] = Map.empty
+  var lastCheckTimestamps: Map[UInt256, Long] = Map.empty
 
-  var filterTimeouts: Map[BigInteger, Cancellable] = Map.empty
+  var filterTimeouts: Map[UInt256, Cancellable] = Map.empty
 
   implicit val timeout = Timeout(txPoolConfig.pendingTxManagerQueryTimeout)
 
@@ -118,11 +120,11 @@ class FilterManager(
     case GetFilterChanges(id)                              => getFilterChanges(id)
     case FilterTimeout(id)                                 => uninstallFilter(id)
     case gl: GetLogs =>
-      val filter = LogFilter(BigInteger.ZERO, gl.fromBlock, gl.toBlock, gl.address, gl.topics)
+      val filter = LogFilter(UInt256.Zero, gl.fromBlock, gl.toBlock, gl.address, gl.topics)
       sender() ! LogFilterLogs(getLogs(filter, None))
   }
 
-  private def resetTimeout(id: BigInteger): Unit = {
+  private def resetTimeout(id: UInt256) {
     filterTimeouts.get(id).foreach(_.cancel())
     val timeoutCancellable = scheduler.scheduleOnce(filterConfig.filterTimeout, self, FilterTimeout(id))
     filterTimeouts += (id -> timeoutCancellable)
@@ -136,7 +138,7 @@ class FilterManager(
     sender() ! NewFilterResponse(filter.id)
   }
 
-  private def uninstallFilter(id: BigInteger): Unit = {
+  private def uninstallFilter(id: UInt256) {
     filters -= id
     lastCheckBlocks -= id
     lastCheckTimestamps -= id
@@ -145,7 +147,7 @@ class FilterManager(
     sender() ! UninstallFilterResponse()
   }
 
-  private def getFilterLogs(id: BigInteger): Unit = {
+  private def getFilterLogs(id: UInt256) {
     val filterOpt = filters.get(id)
     filterOpt.foreach { _ =>
       lastCheckBlocks += (id -> appStateStorage.getBestBlockNumber())
@@ -171,7 +173,7 @@ class FilterManager(
   }
 
   private def getLogs(filter: LogFilter, startingBlockNumber: Option[Long] = None): Seq[TxLog] = {
-    val bytesToCheckInBloomFilter = filter.address.map(a => Seq(a.bytes)).getOrElse(Nil) ++ filter.topics.flatten
+    val bytesToCheckInBloomFilter = filter.address.map(a => List(a.bytes)).getOrElse(Nil) ::: filter.topics.flatten
 
     @tailrec
     def recur(currentBlockNumber: Long, toBlockNumber: Long, logsSoFar: Seq[TxLog]): Seq[TxLog] = {
@@ -209,7 +211,7 @@ class FilterManager(
     else logs
   }
 
-  private def getFilterChanges(id: BigInteger): Unit = {
+  private def getFilterChanges(id: UInt256) {
     val bestBlockNumber = appStateStorage.getBestBlockNumber()
     val lastCheckBlock = lastCheckBlocks.getOrElse(id, bestBlockNumber)
     val lastCheckTimestamp = lastCheckTimestamps.getOrElse(id, System.currentTimeMillis())
@@ -240,7 +242,7 @@ class FilterManager(
   }
 
   private def getLogsFromBlock(filter: LogFilter, block: Block, receipts: Seq[Receipt]): Seq[TxLog] = {
-    val bytesToCheckInBloomFilter = filter.address.map(a => Seq(a.bytes)).getOrElse(Nil) ++ filter.topics.flatten
+    val bytesToCheckInBloomFilter = filter.address.map(a => List(a.bytes)).getOrElse(Nil) ++ filter.topics.flatten
 
     receipts.zipWithIndex.foldLeft(Nil: Seq[TxLog]) {
       case (logsSoFar, (receipt, txIndex)) =>
@@ -299,7 +301,7 @@ class FilterManager(
       }
   }
 
-  private def generateId(): BigInteger = BigInteger.valueOf(Random.nextLong()).abs
+  private def generateId(): UInt256 = UInt256.safe(Random.nextLong().abs)
 
   private def resolveBlockNumber(blockParam: BlockParam, bestBlockNumber: Long): Long = {
     blockParam match {
